@@ -1,0 +1,27 @@
+
+
+/**:
+  ros__parameters:
+    # Core
+    frame_id: "base_link"
+    subscribe_rgbd: true
+    approx_sync: true
+    queue_size: 30
+    use_sim_time: false
+
+    # Pose + TF publishing
+    publish_tf: true
+    map_frame_id: "map"
+    odom_frame_id: "odom"
+    publish_null_when_lost: true
+
+    # Real-time tuning (safe, sane defaults)
+    RGBD/LinearUpdate: "0.10"     # trigger new keyframe after 10 cm
+    RGBD/AngularUpdate: "0.10"    # or ~6 deg
+    Kp/MaxDepth: "4.0"            # clamp far depth (m)
+    Vis/MinInliers: "12"
+    Vis/MaxFeatures: "1500"
+
+    # Memory/graph (incremental mapping)
+    Mem/IncrementalMemory: "true"
+    Mem/STMSize: "30"

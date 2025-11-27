@@ -1,0 +1,17 @@
+
+
+/**:
+  ros__parameters:
+    camera:
+      i_enable_rgb: false
+      i_enable_left: false
+      i_enable_right: false
+      i_enable_depth: false
+      i_publish_tf: false
+
+    rgb:
+      i_fps: 0
+    stereo:
+      i_fps: 0
+    pointcloud:
+      i_enable: false
