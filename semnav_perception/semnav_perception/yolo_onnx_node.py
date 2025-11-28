@@ -41,9 +41,9 @@ class YoloOnnxNode(Node):
         default_model_path = os.path.expanduser(
             '~/ros_ws/src/semnav_perception/models/yolov8n.onnx'
         )
-        self.declare_parameter('image_topic', '/camera/image_raw')
+        self.declare_parameter('image_topic', '/oakd/rgb/preview/image_raw')
         self.declare_parameter('model_path', default_model_path)
-        self.declare_parameter('score_threshold', 0.4)
+        self.declare_parameter('score_threshold', 0.15)
         self.declare_parameter('iou_threshold', 0.45)  
 
         image_topic = self.get_parameter('image_topic').get_parameter_value().string_value
@@ -93,9 +93,12 @@ class YoloOnnxNode(Node):
 
     def image_callback(self, msg: Image):
         # Convert ROS Image -> numpy RGB
+        self.get_logger().info("Received an image")
         img = self.rosimg_to_numpy(msg)
         if img is None:
-            return
+            return self.get_logger().info("No Image received")
+
+
         
         h, w, _ = img.shape
 
@@ -108,16 +111,51 @@ class YoloOnnxNode(Node):
 
         # Inference
         outputs = self.session.run(None, {self.input_name: input_tensor})
-        # Ultralytics YOLOv8 ONNX: (1, N, 84) = [x, y, w, h, obj_conf, 80 class scores]
-        preds = outputs[0][0] # (N, 84)
+
+        raw = outputs[0]
+        self.get_logger().info(f"YOLO raw output shape: {raw.shape}")
+
+        if raw.ndim != 3:
+            self.get_logger().error(f"Unexpected YOLO output rank: {raw.ndim}")
+            return
+
+        # We expect one of these:
+        #  - (1, 84, N)  -> transpose to (N, 84)
+        #  - (1, N, 84)  -> use as-is
+        if raw.shape[1] == 84:
+            # (1, 84, N) -> (N, 84)
+            preds = np.transpose(raw[0], (1, 0))
+        elif raw.shape[2] == 84:
+            # (1, N, 84) -> (N, 84)
+            preds = raw[0]
+        else:
+            self.get_logger().error(f"Unexpected YOLO output shape: {raw.shape}")
+            return
+
+        self.get_logger().info(f"Preds shape after reshape: {preds.shape}")
 
         boxes_xywh = preds[:, 0:4]
         scores_obj = preds[:, 4]
         scores_cls = preds[:, 5:]
 
+
         class_ids = np.argmax(scores_cls, axis=1)
         class_scores = scores_cls[np.arange(scores_cls.shape[0]), class_ids]
         confidences = scores_obj * class_scores
+
+        if confidences.size == 0:
+            self.get_logger().info("No predictions from model output")
+            det_array = Detection2DArray()
+            det_array.header = msg.header
+            self.detections_pub.publish(det_array)
+            return
+
+        self.get_logger().info(
+            f"Conf stats: min={float(confidences.min()):.3f}, "
+            f"max={float(confidences.max()):.3f}, "
+            f"mean={float(confidences.mean()):.3f}"
+        )
+
 
         # Filter by confidence
         keep = confidences > self.score_thresh
@@ -125,9 +163,31 @@ class YoloOnnxNode(Node):
         confidences = confidences[keep]
         class_ids = class_ids[keep]
 
+        keep = confidences > self.score_thresh
+        if not np.any(keep):
+            # For debugging: keep the single best box so we can see if geometry is sane
+            best_idx = int(np.argmax(confidences))
+            self.get_logger().warn(
+                f"No boxes above threshold {self.score_thresh:.2f}. "
+                f"Max conf={float(confidences[best_idx]):.3f}, "
+                f"class={COCO_CLASSES[class_ids[best_idx]] if 0 <= class_ids[best_idx] < len(COCO_CLASSES) else class_ids[best_idx]}"
+            )
+            keep = np.array([best_idx])
+        else:
+            self.get_logger().info(f"Keeping {int(np.sum(keep))} boxes above threshold {self.score_thresh:.2f}")
+
+        boxes_xywh = boxes_xywh[keep]
+        confidences = confidences[keep]
+        class_ids = class_ids[keep]
+
         if boxes_xywh.size == 0:
-            # No detections
+            # Shouldn't really happen now, but just in case
+            self.get_logger().info("No detections remaining after filter")
+            det_array = Detection2DArray()
+            det_array.header = msg.header
+            self.detections_pub.publish(det_array)
             return
+
         
         #Convert model-space boxes back to original image scale 
         scale_x = w / float(self.input_w)
@@ -171,7 +231,7 @@ class YoloOnnxNode(Node):
             det_array.detections.append(det)
 
         self.detections_pub.publish(det_array)
-        # self.get_logger().info(f"Published {len(det_array.detections)} detections")
+        self.get_logger().info(f"Published {len(det_array.detections)} detections")
 
     def rosimg_to_numpy(self, msg: Image):
         """Convert ROS Image to OpenCV BGR numpy array."""
