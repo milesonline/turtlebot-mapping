@@ -119,77 +119,78 @@ class YoloOnnxNode(Node):
             self.get_logger().error(f"Unexpected YOLO output rank: {raw.ndim}")
             return
 
-        # We expect one of these:
-        #  - (1, 84, N)  -> transpose to (N, 84)
-        #  - (1, N, 84)  -> use as-is
+        # Expect (1, 84, 8400) -> (8400, 84)
         if raw.shape[1] == 84:
-            # (1, 84, N) -> (N, 84)
-            preds = np.transpose(raw[0], (1, 0))
+            preds = np.transpose(raw[0], (1, 0))  # (8400, 84)
         elif raw.shape[2] == 84:
-            # (1, N, 84) -> (N, 84)
-            preds = raw[0]
+            preds = raw[0]                        # already (N, 84)
         else:
             self.get_logger().error(f"Unexpected YOLO output shape: {raw.shape}")
             return
 
         self.get_logger().info(f"Preds shape after reshape: {preds.shape}")
 
-        boxes_xywh = preds[:, 0:4]
-        scores_obj = preds[:, 4]
-        scores_cls = preds[:, 5:]
+        # preds row: [x1, y1, x2, y2, 80 class scores]
+        boxes_xyxy = preds[:, 0:4]
+        scores_cls = preds[:, 4:]  # (N, 80), already scores in [0,1] for many exports
 
-
+        # NO extra sigmoid here – treat scores as probabilities
         class_ids = np.argmax(scores_cls, axis=1)
-        class_scores = scores_cls[np.arange(scores_cls.shape[0]), class_ids]
-        confidences = scores_obj * class_scores
+        confidences = scores_cls[np.arange(scores_cls.shape[0]), class_ids]
 
         if confidences.size == 0:
-            self.get_logger().info("No predictions from model output")
+            self.get_logger().info("No predictions from model output (empty confidences)")
             det_array = Detection2DArray()
             det_array.header = msg.header
             self.detections_pub.publish(det_array)
             return
 
         self.get_logger().info(
-            f"Conf stats: min={float(confidences.min()):.3f}, "
+            f"Conf stats (raw class scores): "
+            f"min={float(confidences.min()):.3f}, "
             f"max={float(confidences.max()):.3f}, "
             f"mean={float(confidences.mean()):.3f}"
         )
 
-
-        # Filter by confidence
-        keep = confidences > self.score_thresh
-        boxes_xywh = boxes_xywh[keep]
-        confidences = confidences[keep]
-        class_ids = class_ids[keep]
-
-        keep = confidences > self.score_thresh
+        # Confidence filter
+        keep = confidences >= self.score_thresh
         if not np.any(keep):
-            # For debugging: keep the single best box so we can see if geometry is sane
-            best_idx = int(np.argmax(confidences))
+            max_conf = float(confidences.max())
             self.get_logger().warn(
                 f"No boxes above threshold {self.score_thresh:.2f}. "
-                f"Max conf={float(confidences[best_idx]):.3f}, "
-                f"class={COCO_CLASSES[class_ids[best_idx]] if 0 <= class_ids[best_idx] < len(COCO_CLASSES) else class_ids[best_idx]}"
+                f"Max conf={max_conf:.3f}"
             )
-            keep = np.array([best_idx])
-        else:
-            self.get_logger().info(f"Keeping {int(np.sum(keep))} boxes above threshold {self.score_thresh:.2f}")
-
-        boxes_xywh = boxes_xywh[keep]
-        confidences = confidences[keep]
-        class_ids = class_ids[keep]
-
-        if boxes_xywh.size == 0:
-            # Shouldn't really happen now, but just in case
-            self.get_logger().info("No detections remaining after filter")
             det_array = Detection2DArray()
             det_array.header = msg.header
             self.detections_pub.publish(det_array)
             return
 
-        
-        #Convert model-space boxes back to original image scale 
+        # Keep only boxes above threshold (still in xyxy)
+        boxes_xyxy = boxes_xyxy[keep]
+        confidences = confidences[keep]
+        class_ids = class_ids[keep]
+
+        if boxes_xyxy.size == 0:
+            self.get_logger().info("No detections remaining after confidence filter")
+            det_array = Detection2DArray()
+            det_array.header = msg.header
+            self.detections_pub.publish(det_array)
+            return
+
+        # Convert [x1, y1, x2, y2] -> [cx, cy, w, h] for the rest of the pipeline
+        x1 = boxes_xyxy[:, 0]
+        y1 = boxes_xyxy[:, 1]
+        x2 = boxes_xyxy[:, 2]
+        y2 = boxes_xyxy[:, 3]
+
+        w_box = x2 - x1
+        h_box = y2 - y1
+        cx = x1 + 0.5 * w_box
+        cy = y1 + 0.5 * h_box
+
+        boxes_xywh = np.stack([cx, cy, w_box, h_box], axis=1)
+
+        # Convert model-space boxes back to original image scale
         scale_x = w / float(self.input_w)
         scale_y = h / float(self.input_h)
 
@@ -198,17 +199,20 @@ class YoloOnnxNode(Node):
         boxes_xywh[:, 2] *= scale_x
         boxes_xywh[:, 3] *= scale_y
 
-        # NMS
+        # NMS on [cx, cy, w, h]
         nms_indices = self.nms_xywh(boxes_xywh, confidences, self.iou_thresh)
         boxes_xywh = boxes_xywh[nms_indices]
         confidences = confidences[nms_indices]
         class_ids = class_ids[nms_indices]
 
+
+
+
         # Build Detection2DArray
         det_array = Detection2DArray()
         det_array.header = msg.header
 
-        for box, score, cls_id in zip(boxes_xywh, confidences, class_ids):
+        for box, score, cls_id in zip(boxes_xyxy, confidences, class_ids):
             det = Detection2D()
             det.header = msg.header
 
@@ -231,6 +235,11 @@ class YoloOnnxNode(Node):
             det_array.detections.append(det)
 
         self.detections_pub.publish(det_array)
+        self.get_logger().info(
+            f"Published {len(det_array.detections)} detections "
+            f"for frame stamp={msg.header.stamp.sec}.{msg.header.stamp.nanosec}"
+        )
+
         self.get_logger().info(f"Published {len(det_array.detections)} detections")
 
     def rosimg_to_numpy(self, msg: Image):
@@ -304,3 +313,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+    

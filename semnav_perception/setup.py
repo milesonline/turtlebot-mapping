@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'yolo_stub = semnav_perception.yolo_stub_node:main',
             'yolo_onnx = semnav_perception.yolo_onnx_node:main',
+            'yolo_viz = semnav_perception.yolo_viz_node:main',
         ],
     },
 )
