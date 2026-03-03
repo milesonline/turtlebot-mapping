@@ -27,6 +27,7 @@ setup(
             'yolo_stub = semnav_perception.yolo_stub_node:main',
             'yolo_onnx = semnav_perception.yolo_onnx_node:main',
             'yolo_viz = semnav_perception.yolo_viz_node:main',
+            'semantic_projection = semnav_perception.semantic_projection_node:main',
         ],
     },
 )

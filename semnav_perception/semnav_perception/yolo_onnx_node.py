@@ -8,6 +8,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose, BoundingBox2D
+from semnav_msgs.msg import SemanticObject
 
 
 COCO_CLASSES = [
@@ -85,6 +86,12 @@ class YoloOnnxNode(Node):
         self.detections_pub = self.create_publisher(
             Detection2DArray,
             '/semnav/detections',
+            10
+        )
+
+        self.obj_pub = self.create_publisher(
+            SemanticObject,
+            '/semnav/objects_raw',
             10
         )
 
@@ -227,6 +234,16 @@ class YoloOnnxNode(Node):
             bbox.size_y = bh
             det.bbox = bbox
 
+            obj = SemanticObject()
+            obj.class_id = COCO_CLASSES[cls_id] if 0 <= cls_id < len(COCO_CLASSES) else str(cls_id)
+            obj.x = float(cx)
+            obj.y = float(cy)
+            obj.confidence = float(score)
+            obj.stamp = msg.header.stamp
+
+            self.obj_pub.publish(obj)
+
+
             hyp = ObjectHypothesisWithPose()
             hyp.hypothesis.class_id = COCO_CLASSES[cls_id] if 0 <= cls_id < len(COCO_CLASSES) else str(cls_id)
             hyp.hypothesis.score = float(score)
@@ -241,6 +258,8 @@ class YoloOnnxNode(Node):
         )
 
         self.get_logger().info(f"Published {len(det_array.detections)} detections")
+
+
 
     def rosimg_to_numpy(self, msg: Image):
         """Convert ROS Image to OpenCV BGR numpy array."""
