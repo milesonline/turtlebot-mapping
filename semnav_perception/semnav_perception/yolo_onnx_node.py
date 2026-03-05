@@ -8,7 +8,6 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose, BoundingBox2D
-from semnav_msgs.msg import SemanticObject
 
 
 COCO_CLASSES = [
@@ -42,7 +41,7 @@ class YoloOnnxNode(Node):
         default_model_path = os.path.expanduser(
             '~/ros_ws/src/semnav_perception/models/yolov8n.onnx'
         )
-        self.declare_parameter('image_topic', '/oakd/rgb/preview/image_raw')
+        self.declare_parameter('image_topic', '/oakd/rgb/image_raw')
         self.declare_parameter('model_path', default_model_path)
         self.declare_parameter('score_threshold', 0.15)
         self.declare_parameter('iou_threshold', 0.45)  
@@ -89,11 +88,6 @@ class YoloOnnxNode(Node):
             10
         )
 
-        self.obj_pub = self.create_publisher(
-            SemanticObject,
-            '/semnav/objects_raw',
-            10
-        )
 
         self.get_logger().info(f"YoloOnnxNode listening to: {image_topic}")
         self.get_logger().info("Publishing real detections on: /semnav/detections")
@@ -233,15 +227,6 @@ class YoloOnnxNode(Node):
             bbox.size_x = bw
             bbox.size_y = bh
             det.bbox = bbox
-
-            obj = SemanticObject()
-            obj.class_id = COCO_CLASSES[cls_id] if 0 <= cls_id < len(COCO_CLASSES) else str(cls_id)
-            obj.x = float(cx)
-            obj.y = float(cy)
-            obj.confidence = float(score)
-            obj.stamp = msg.header.stamp
-
-            self.obj_pub.publish(obj)
 
 
             hyp = ObjectHypothesisWithPose()

@@ -8,11 +8,12 @@ from rclpy.node import Node
 
 from sensor_msgs.msg import Image, CameraInfo
 from vision_msgs.msg import Detection2DArray
+from geometry_msgs.msg import PointStamped
 
 from tf2_ros import Buffer, TransformListener
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 
-# Your custom msg
+# custom msg
 from semnav_msgs.msg import SemanticObject
 
 
@@ -22,8 +23,8 @@ class SemanticProjectionNode(Node):
 
         # Params (make it swappable tomorrow)
         self.declare_parameter("detections_topic", "/semnav/detections")
-        self.declare_parameter("depth_topic", "/oakd/stereo/image_raw")          # change tomorrow
-        self.declare_parameter("camera_info_topic", "/oakd/rgb/preview/camera_info")  # change tomorrow
+        self.declare_parameter("depth_topic", "/oakd/stereo/image_raw")     
+        self.declare_parameter("camera_info_topic", "/oakd/rgb/camera_info")
         self.declare_parameter("map_frame", "map")
 
         self.declare_parameter("depth_window", 3)       # median window size (odd int)
@@ -107,13 +108,33 @@ class SemanticProjectionNode(Node):
                 tf = self.tf_buffer.lookup_transform(
                     self.map_frame,
                     cam_frame,
-                    dets.header.stamp,  # align to detection time
+                    rclpy.time.Time(),  # align to detection time
                     timeout=rclpy.duration.Duration(seconds=0.2),
                 )
             except (LookupException, ConnectivityException, ExtrapolationException):
                 continue
 
-            mx, my = self.transform_point_xy(tf, x, y, z)
+            point = PointStamped()
+            point.header.frame_id = cam_frame
+            point.headeer.stamp = dets.header.stamp
+
+            point.point.x = x
+            point.point.y = y
+            point.point.z = z
+
+            try:
+                point_map = self.tf_buffer.transform(
+                    point,
+                    self.map_frame,
+                    timeout=rclpy.duration.DUration(seconds=0.2)
+                )
+            except Exception:
+                continue
+            
+            mx = point+map.point.x
+            my = point+map.point.y
+
+
 
             # Choose top hypothesis
             hyp0 = det.results[0].hypothesis
@@ -122,7 +143,7 @@ class SemanticProjectionNode(Node):
             obj.x = float(mx)
             obj.y = float(my)
             obj.confidence = float(hyp0.score)
-            obj.stamp = dets.header.stamp
+            obj.stamp = rclypy.time.Time()
 
             self.pub.publish(obj)
 
@@ -162,42 +183,7 @@ class SemanticProjectionNode(Node):
         self.get_logger().warn(f"Unsupported depth encoding: {msg.encoding}")
         return None
 
-    def transform_point_xy(self, tf, x: float, y: float, z: float) -> Tuple[float, float]:
-        # Apply transform (translation + rotation quaternion)
-        t = tf.transform.translation
-        q = tf.transform.rotation
-
-        # Rotate point by quaternion
-        # q * p * q^-1
-        px, py, pz = x, y, z
-        qw, qx, qy, qz = q.w, q.x, q.y, q.z
-
-        # Quaternion rotation (optimized)
-        # v' = v + 2*cross(q_vec, cross(q_vec,v) + q_w*v)
-        vx, vy, vz = px, py, pz
-        qvx, qvy, qvz = qx, qy, qz
-
-        # cross(qv, v)
-        cx1 = qvy * vz - qvz * vy
-        cy1 = qvz * vx - qvx * vz
-        cz1 = qvx * vy - qvy * vx
-
-        # cross(qv, (cross + qw*v))
-        ax = cx1 + qw * vx
-        ay = cy1 + qw * vy
-        az = cz1 + qw * vz
-
-        cx2 = qvy * az - qvz * ay
-        cy2 = qvz * ax - qvx * az
-        cz2 = qvx * ay - qvy * ax
-
-        rx = vx + 2.0 * cx2
-        ry = vy + 2.0 * cy2
-
-        mx = rx + t.x
-        my = ry + t.y
-        return mx, my
-
+    
 
 def main(args=None):
     rclpy.init(args=args)

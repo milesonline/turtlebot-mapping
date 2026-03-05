@@ -19,7 +19,7 @@ class YoloVizNode(Node):
         super().__init__("yolo_viz_node")
 
         #Parameters (can be overidden with --ros-args)
-        self.declare_parameter("image_topic", "oakd/rgb/preview/image_raw")
+        self.declare_parameter("image_topic", "oakd/rgb/image_raw")
         self.declare_parameter("detections_topic", "/semnav/detections")
         self.declare_parameter("output_image_topic", '/semnav/debug/image')
 

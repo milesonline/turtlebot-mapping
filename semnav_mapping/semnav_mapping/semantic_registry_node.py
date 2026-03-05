@@ -27,7 +27,7 @@ class SemanticRegistryNode(Node):
         self.declare_parameter('merge_radius', 60.0)
         self.declare_parameter('stale_seconds', 2.0)
         self.declare_parameter('publish_hz', 2.0)
-        self.declare_parameter('allowed_classes', Parameter.Type.STRING_ARRAY) #empty = allow all
+        self.declare_parameter('allowed_classes', []) #empty = allow all
         allowed = self.get_parameter('allowed_classes').value or []
         self.allowed_classes = set(allowed)
 
