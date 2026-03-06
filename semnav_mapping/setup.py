@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'semantic_registry = semnav_mapping.semantic_registry_node:main',
+            'semantic_marker_publisher = semnav_mapping.semantic_marker_publisher:main',
         ],
     },
 )
