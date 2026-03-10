@@ -41,7 +41,7 @@ class YoloOnnxNode(Node):
         )
         self.declare_parameter('image_topic',      '/oakd/rgb/image_raw')
         self.declare_parameter('model_path',       default_model_path)
-        self.declare_parameter('score_threshold',  0.40)
+        self.declare_parameter('score_threshold',  0.15)
         self.declare_parameter('iou_threshold',    0.45)
 
         image_topic       = self.get_parameter('image_topic').get_parameter_value().string_value
@@ -81,7 +81,7 @@ class YoloOnnxNode(Node):
         self.get_logger().info(f"YoloOnnxNode listening to: {image_topic}")
         self.get_logger().info("Publishing detections on: /semnav/detections")
 
-    # ── Image callback 
+    # callback 
 
     def image_callback(self, msg: Image):
         img = self.rosimg_to_numpy(msg)
@@ -90,13 +90,13 @@ class YoloOnnxNode(Node):
 
         h, w = img.shape[:2]
 
-        # ── Preprocess 
+        #  Preprocess 
         img_resized  = cv2.resize(img, (self.input_w, self.input_h))
         img_rgb      = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
         img_norm     = img_rgb.astype(np.float32) / 255.0
         input_tensor = np.expand_dims(np.transpose(img_norm, (2, 0, 1)), axis=0)
 
-        # ── Inference 
+        # Inference 
         raw = self.session.run(None, {self.input_name: input_tensor})[0]
 
         if raw.ndim != 3:
@@ -112,13 +112,13 @@ class YoloOnnxNode(Node):
             self.get_logger().error(f"Unexpected YOLO output shape: {raw.shape}")
             return
 
-        # ── Decode 
+        # Decode 
         boxes_xyxy  = preds[:, 0:4]          # model-space xyxy
         scores_cls  = preds[:, 4:]           # (N, 80)
         class_ids   = np.argmax(scores_cls, axis=1)
         confidences = scores_cls[np.arange(scores_cls.shape[0]), class_ids]
 
-        # ── Confidence filter 
+        # Confidence filter 
         keep = confidences >= self.score_thresh
         if not np.any(keep):
             self.get_logger().warn(
@@ -133,7 +133,7 @@ class YoloOnnxNode(Node):
         confidences = confidences[keep]
         class_ids   = class_ids[keep]
 
-        # ── Convert xyxy → xywh (cx, cy, w, h) in model space 
+        # Convert xyxy → xywh (cx, cy, w, h) in model space 
         x1, y1, x2, y2 = boxes_xyxy[:, 0], boxes_xyxy[:, 1], boxes_xyxy[:, 2], boxes_xyxy[:, 3]
         w_box = x2 - x1
         h_box = y2 - y1
@@ -141,7 +141,7 @@ class YoloOnnxNode(Node):
         cy    = y1 + 0.5 * h_box
         boxes_xywh = np.stack([cx, cy, w_box, h_box], axis=1)
 
-        # ── Scale to original image size 
+        # Scale to original image size 
         scale_x = w / float(self.input_w)
         scale_y = h / float(self.input_h)
         boxes_xywh[:, 0] *= scale_x   # cx
@@ -149,13 +149,13 @@ class YoloOnnxNode(Node):
         boxes_xywh[:, 2] *= scale_x   # w
         boxes_xywh[:, 3] *= scale_y   # h
 
-        # ── NMS 
+        # NMS 
         nms_idx    = self.nms_xywh(boxes_xywh, confidences, self.iou_thresh)
         boxes_xywh = boxes_xywh[nms_idx]    # FIX: iterate xywh, not xyxy
         confidences = confidences[nms_idx]
         class_ids  = class_ids[nms_idx]
 
-        # ── Build Detection2DArray 
+        # Build Detection2DArray 
         det_array        = Detection2DArray()
         det_array.header = msg.header
 
@@ -187,7 +187,7 @@ class YoloOnnxNode(Node):
             throttle_duration_sec=1.0,
         )
 
-    # ── Helpers 
+    # Helpers 
 
     def _publish_empty(self, msg: Image):
         det_array        = Detection2DArray()

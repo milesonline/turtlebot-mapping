@@ -24,7 +24,7 @@ class SemanticProjectionNode(Node):
     def __init__(self):
         super().__init__("semantic_projection")
 
-        # ── Parameters 
+        #Parameters 
         self.declare_parameter("detections_topic",  "/semnav/detections")
         self.declare_parameter("depth_topic",        "/oakd/stereo/image_raw")
         self.declare_parameter("camera_info_topic",  "/oakd/stereo/camera_info")   # FIX: was rgb info — use stereo info to match depth pixels
@@ -49,31 +49,38 @@ class SemanticProjectionNode(Node):
         self.max_depth_m = float(self.get_parameter("max_depth_m").value)
         self.min_depth_m = float(self.get_parameter("min_depth_m").value)
 
-        # ── TF 
+        #TF
         self.tf_buffer   = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # ── Cached inputs 
+        #  Cached inputs 
         self._last_depth: Optional[Image]      = None
         self._last_info:  Optional[CameraInfo] = None
 
-        # ── QoS: BEST_EFFORT for sensor streams to avoid message loss 
-        sensor_qos = QoSProfile(
+        #  QoS matched to OAK-D publisher profiles 
+        # depth image = RELIABLE, camera_info = BEST_EFFORT
+        depth_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        info_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
             durability=DurabilityPolicy.VOLATILE,
         )
 
-        # ── Subscriptions 
-        self.create_subscription(Image,           self.depth_topic,    self.on_depth,      sensor_qos)
-        self.create_subscription(CameraInfo,      self.cam_info_topic, self.on_info,       sensor_qos)
+        # Subscriptions 
+        self.create_subscription(Image,           self.depth_topic,    self.on_depth,  depth_qos)
+        self.create_subscription(CameraInfo,      self.cam_info_topic, self.on_info,   info_qos)
         self.create_subscription(Detection2DArray, det_topic,          self.on_detections, 10)
 
-        # ── Publisher 
+        # Publisher 
         self.pub = self.create_publisher(SemanticObject, pub_topic, 10)
 
-        # ── Diagnostics counters 
+        # Diagnostics counters 
         self._det_count      = 0
         self._published      = 0
         self._tf_failures    = 0
@@ -91,7 +98,7 @@ class SemanticProjectionNode(Node):
             f"  use_latest_tf: {self.use_latest_tf}"
         )
 
-    # ── Callbacks 
+    # Callbacks 
 
     def on_depth(self, msg: Image):
         self._last_depth = msg
@@ -101,7 +108,7 @@ class SemanticProjectionNode(Node):
 
     def on_detections(self, dets: Detection2DArray):
 
-        # ── Guard: wait for depth + info 
+        # wait for depth + info 
         if self._last_depth is None:
             self.get_logger().warn(
                 f"No depth frame received yet on '{self.depth_topic}' — check topic name and QoS.",
@@ -115,7 +122,7 @@ class SemanticProjectionNode(Node):
             )
             return
 
-        # ── Camera intrinsics 
+        # Camera intrinsics 
         K  = self._last_info.k
         fx, fy = K[0], K[4]
         cx, cy = K[2], K[5]
@@ -126,7 +133,7 @@ class SemanticProjectionNode(Node):
         depth_msg  = self._last_depth
         cam_frame  = dets.header.frame_id or depth_msg.header.frame_id
 
-        # ── Diagnostic: log every batch 
+        # Diagnostic: log every batch 
         n = len(dets.detections)
         self._det_count += n
         self.get_logger().info(
@@ -140,7 +147,7 @@ class SemanticProjectionNode(Node):
             self.get_logger().warn("Detection header.frame_id is empty and depth frame_id is also empty — cannot transform.")
             return
 
-        # ── Check TF reachability once per batch 
+        # Check TF reachability once per batch
         try:
             self.tf_buffer.lookup_transform(
                 self.map_frame,
@@ -156,7 +163,7 @@ class SemanticProjectionNode(Node):
             self._tf_failures += 1
             return
 
-        # ── Per-detection projection 
+        # Per-detection projection 
         for det in dets.detections:
             if not det.results:
                 continue
@@ -232,7 +239,7 @@ class SemanticProjectionNode(Node):
             self.pub.publish(obj)
             self._published += 1
 
-    # ── Depth extraction 
+    # Depth extraction 
 
     def depth_at_pixel_m(self, msg: Image, u: float, v: float, win: int) -> Optional[float]:
         uu = int(round(u))
@@ -267,7 +274,7 @@ class SemanticProjectionNode(Node):
         )
         return None
 
-    # ── Periodic status 
+    #Periodic status 
 
     def _log_status(self):
         self.get_logger().info(
@@ -280,7 +287,6 @@ class SemanticProjectionNode(Node):
         )
 
 
-# ── Entry point 
 
 def main(args=None):
     rclpy.init(args=args)

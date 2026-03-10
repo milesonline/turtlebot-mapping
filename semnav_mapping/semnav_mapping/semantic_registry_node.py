@@ -65,7 +65,7 @@ class SemanticRegistryNode(Node):
             f"allowed_classes={self.allowed_classes or 'ALL'}"
         )
 
-    # ── Incoming raw object 
+    # Incoming raw object 
 
     def cb(self, msg: SemanticObject):
         now_ns = self.get_clock().now().nanoseconds
@@ -105,7 +105,7 @@ class SemanticRegistryNode(Node):
                 'last_seen_ns': now_ns,
             })
 
-    # ── Periodic publish 
+    # Periodic publish 
 
     def on_timer(self):
         now_ns   = self.get_clock().now().nanoseconds
